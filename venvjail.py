@@ -211,7 +211,7 @@ def _fix_broken_links(dest_dir, directories=None):
 
 def _fix_relocation(dest_dir, virtual_env, no_relocate_shebang):
     """Fix relocation shebang from python scripts"""
-    shebang = "#!" + os.path.join(virtual_env, "bin", "python2")
+    shebang = "#!" + os.path.join(virtual_env, "bin", "python")
     for dirpath, dirnames, filenames in os.walk(dest_dir):
         for name in filenames:
             rel_name = os.path.join(dirpath, name)
