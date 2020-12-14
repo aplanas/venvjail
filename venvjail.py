@@ -357,6 +357,7 @@ def create(args):
     options = []
     if args.system_site_packages:
         options.append("--system-site-packages")
+    options.append("--without-pip")
     options = " ".join(options)
     subprocess.call(f"virtualenv {options} {args.dest_dir}", shell=True)
 
