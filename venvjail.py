@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # Copyright (c) 2017 SUSE LINUX GmbH, Nuernberg, Germany.
+# Copyright (c) 2020 SUSE LLC.
 #
 # All modifications and additions to the file contributed by third parties
 # remain the property of their copyright owners, unless otherwise agreed
@@ -55,7 +56,7 @@ python3.*
 rpmlint.*
 """
 
-LICENSE = """# Copyright (c) 2018 SUSE LINUX GmbH, Nuernberg, Germany.
+LICENSE = """# Copyright (c) 2020 SUSE LLC.
 #
 # All modifications and additions to the file contributed by third parties
 # remain the property of their copyright owners, unless otherwise agreed
