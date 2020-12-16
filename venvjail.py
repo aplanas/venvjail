@@ -19,11 +19,13 @@
 # and Python RPMs.  Used to jail OpenStack services.
 
 import argparse
+import datetime
 import fnmatch
 import glob
 import itertools
 import os
 import os.path
+import pathlib
 import re
 import subprocess
 import xml.etree.ElementTree as ET
@@ -34,7 +36,7 @@ EXCLUDE_RPM = r"""# List of packages to ignore (use Python regex)
 # Note that `exclude` takes precedence over `include`.  So if a
 # package match both constrains, it will be excluded.
 
-# Exclude irrelevan sub-packages
+# Exclude irrelevant sub-packages
 .*-debuginfo$
 .*-debugsource$
 .*-devel$
@@ -56,7 +58,7 @@ python3.*
 rpmlint.*
 """
 
-LICENSE = """# Copyright (c) 2020 SUSE LLC.
+LICENSE = f"""# Copyright (c) {datetime.datetime.today().year} SUSE LLC.
 #
 # All modifications and additions to the file contributed by third parties
 # remain the property of their copyright owners, unless otherwise agreed
@@ -113,7 +115,7 @@ def _insert(filename, after, line):
 def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang):
     """Fix virtualenv activators."""
     # New path where the venv will live at the end
-    virtual_env = os.path.join(relocated, dest_dir)
+    virtual_env = relocated / dest_dir
 
     _fix_filesystem(dest_dir)
     _fix_alternatives(dest_dir, relocated)
@@ -125,9 +127,8 @@ def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang):
 
 def _fix_filesystem(dest_dir):
     """Fix filesystem permissions."""
-
     # When a directory is not owned by a package, cpio can create the
-    # directory with wrong permissions.  For SLE12 spio is not taking
+    # directory with wrong permissions.  For SLE12 cpio is not taking
     # care of the global mask (022), and create the directory with
     # 700.
     dirs = {
@@ -152,20 +153,16 @@ def _fix_filesystem(dest_dir):
         "var/log": 0o755,
     }
 
-    # Since OBS do not (if is not white-listed) run as root, all the
-    # cpio output will be create file with the same owner (the OBS
+    # Since OBS do not (if it is not white-listed) run as root, all
+    # the cpio output will create files with the same owner (the OBS
     # user).  This create bugs like bsc#1083826, when a directory can
     # only be accessed by the owner or the group but not for others.
-    dirs.update(
-        {
-            "usr/share/keystone": 0o755,
-        }
-    )
+    # dirs.update({"usr/share/keystone": 0o755})
 
     for dir_, mod_ in dirs.items():
-        dir_ = os.path.join(dest_dir, dir_)
-        if os.path.isdir(dir_):
-            os.chmod(dir_, mod_)
+        dir_ = dest_dir / dir_
+        if dir_.is_dir():
+            dir_.chmod(mod_)
 
 
 def _fix_alternatives(dest_dir, relocated):
@@ -175,11 +172,11 @@ def _fix_alternatives(dest_dir, relocated):
         for name in filenames:
             rel_name = os.path.join(dirpath, name)
             if os.path.islink(rel_name) and "alternatives" in os.readlink(rel_name):
-                # We assume that the Python 2.7 alternative is living
+                # We assume that the Python 3.8 alternative is living
                 # in the same directory, but we create the link the
                 # the place were it will live at the end
-                alt_name = os.path.join(relocated, dirpath, name + "-2.7")
-                alt_rel_name = rel_name + "-2.7"
+                alt_name = os.path.join(relocated, dirpath, name + "-3.8")
+                alt_rel_name = rel_name + "-3.8"
                 if os.path.exists(alt_rel_name):
                     os.unlink(rel_name)
                     os.symlink(alt_name, rel_name)
@@ -228,7 +225,7 @@ def _fix_relocation(dest_dir, virtual_env, no_relocate_shebang):
 
 def _fix_activators(dest_dir, virtual_env):
     """Fix virtualenv activators."""
-    ld_library_path = os.path.join(virtual_env, "lib")
+    ld_library_path = virtual_env / "lib"
     activators = {
         "activate": {
             "replace": (r'VIRTUAL_ENV=".*"', f'VIRTUAL_ENV="{virtual_env}"'),
@@ -260,7 +257,7 @@ def _fix_activators(dest_dir, virtual_env):
     }
 
     for activator, action in activators.items():
-        filename = os.path.join(dest_dir, "bin", activator)
+        filename = dest_dir / "bin" / activator
         # Fix the VIRTUAL_ENV directory
         original, line = action["replace"]
         _replace(filename, original, line)
@@ -272,83 +269,67 @@ def _fix_activators(dest_dir, virtual_env):
         _insert(filename, after, line)
 
 
-def _fix_systemd_services(dest_dir, virtual_env):
-    """Fix OpenStack systemd services."""
-    services = os.path.join(dest_dir, "usr/lib/systemd/system")
-    for service in glob.glob(os.path.join(services, "*.service")):
+def _fix_systemd_services_in(services_dir, virtual_env):
+    for service in services_dir.glob("*.service"):
         # Service files are read only
-        os.chmod(service, 0o644)
+        service.chmod(0o644)
         _replace(service, r"ExecStart=(.*)", rf"ExecStart={virtual_env}\1")
         _replace(service, r"ExecStartPre=-(.*)", rf"ExecStartPre=-{virtual_env}\1")
-        os.chmod(service, 0o444)
+        service.chmod(0o444)
+
+        # TODO: Do we need this? If so, we should adjust some After and Before
         # For convenience, rename the service
-        os.rename(service, os.path.join(services, "venv-" + os.path.basename(service)))
+        service.rename(services_dir / ("venv-" + service.name))
 
 
-def _os_release(ardana_version):
-    """Recover release information."""
-    output = subprocess.check_output("lsb_release -a", shell=True)
-    output = output.decode("utf-8")
-    return {
-        "distributor_id": re.findall(r"Distributor ID:\s+(.*)$", output, re.MULTILINE)[
-            0
-        ],
-        "description": re.findall(r"Description:\s+(.*)$", output, re.MULTILINE)[0],
-        "release": re.findall(r"Release:\s+(.*)$", output, re.MULTILINE)[0],
-        "codename": re.findall(r"Codename:\s+(.*)$", output, re.MULTILINE)[0],
-        "deployer_version": f"ardana-{ardana_version}",
-        "pip_mirror": "OBS",
-    }
+def _fix_systemd_services(dest_dir, virtual_env):
+    """Fix systemd services."""
+    for systemd_dir in ("lib/systemd/system", "usr/lib/systemd/system"):
+        _fix_systemd_services_in(dest_dir / systemd_dir, virtual_env)
 
 
-def _pip_freeze(dest_dir):
-    """Return the output from `pip freeze`."""
-    output = subprocess.check_output(
-        f"cd {dest_dir}; source bin/activate; pip freeze", shell=True
+def _extract_rpm(package, directory):
+    subprocess.call(
+        f"cd {directory}; rpm2cpio {package} | "
+        "cpio --extract --unconditional "
+        "--preserve-modification-time --make-directories "
+        "--extract-over-symlinks",
+        stdout=subprocess.DEVNULL,
+        shell=True,
     )
-    output = output.decode("utf-8")
-    return output.split("\n")
 
 
-def add_meta_inf(dest_dir, version, ardana_version):
-    """Add META-INF directory content."""
-    meta_inf = os.path.join(dest_dir, "META-INF")
-    os.mkdir(meta_inf)
+def _extract_deb(package, directory):
+    subprocess.call(
+        f"cd {directory}; ar x {package}; "
+        "tar -xJvf data.tar.xz; "
+        "rm control.tar.gz data.tar.xz debian-binary",
+        stdout=subprocess.DEVNULL,
+        shell=True,
+    )
 
-    service, timestamp = os.path.basename(dest_dir).rsplit("-", 1)
 
-    # Add version YAML file
-    version_yml = os.path.join(meta_inf, "version.yml")
-    with open(version_yml, "w+") as f:
-        print(LICENSE, file=f)
-        print(file=f)
-        print(f"# Version for: {service}", file=f)
-        print("---", file=f)
-        print(file=f)
-        print("file_format: 1", file=f)
-        print(f"version: {version}", file=f)
-        print(f"timestamp: {timestamp}", file=f)
+def _get_rpm_track_info(package):
+    query = "|".join(
+        ("%{NAME}", "%{EPOCH}", "%{VERSION}", "%{RELEASE}", "%{ARCH}", "%{DISTURL}")
+    )
+    return subprocess.check_output(
+        f"rpm -qp --queryformat='{query}' {package}",
+        stderr=subprocess.DEVNULL,
+        shell=True,
+    )
 
-    release = _os_release(ardana_version)
-    pip_freeze = _pip_freeze(dest_dir)
 
-    # Add manifest YAML file
-    manifest_yml = os.path.join(meta_inf, "manifest.yml")
-    with open(manifest_yml, "w+") as f:
-        print(f"# Manifest for: {service}", file=f)
-        print("---", file=f)
-        print(file=f)
+def _get_deb_track_info(package):
+    query = "|".join(
+        ("${Package}", "None", "${Version}", "None", "${Architecture}", "None", "None")
+    )
 
-        print("# Ardana environment", file=f)
-        print("environment:", file=f)
-        for key, value in release.items():
-            print(f"  {key}: {value}", file=f)
-        print(file=f)
-
-        print("# Pip freeze output", file=f)
-        print("pip: |", file=f)
-        for line in pip_freeze:
-            print(f"  {line}", file=f)
+    return subprocess.check_output(
+        f"dpkg-deb -W --showformat='{query}' {package}",
+        stderr=subprocess.DEVNULL,
+        shell=True,
+    )
 
 
 def create(args):
@@ -359,14 +340,14 @@ def create(args):
         options.append("--system-site-packages")
     options.append("--without-pip")
     options = " ".join(options)
-    subprocess.call(f"virtualenv {options} {args.dest_dir}", shell=True)
+    subprocess.call(f"python3 -m venv {options} {args.dest_dir}", shell=True)
 
     # Prepare the links for /usr/bin and /usr/lib[64]
-    usr = os.path.join(args.dest_dir, "usr")
-    os.mkdir(usr)
-    os.symlink("../bin", os.path.join(usr, "bin"))
-    os.symlink("../lib", os.path.join(usr, "lib"))
-    os.symlink("../lib", os.path.join(usr, "lib64"))
+    usr = args.dest_dir / "usr"
+    usr.mkdir()
+    (usr / "bin").symlink_to("../bin")
+    (usr / "lib").symlink_to("../lib")
+    (usr / "lib64").symlink_to("../lib")
 
     # If both are populated, the algorithm will take precedence over
     # the `exclude` list
@@ -376,54 +357,50 @@ def create(args):
     # Install the packages and maintain a log
     included = []
     excluded = []
-    for package in glob.glob(os.path.join(args.repo, "*.rpm")):
-        rpm = os.path.basename(package)
-        if rpm in exclude:
-            excluded.append(rpm)
+    packages = itertools.chain.from_iterable(
+        args.repo.glob(pkgs) for pkgs in ("*.rpm", "*.deb")
+    )
+    for package in packages:
+        pkg = package.name
+        if pkg in exclude:
+            excluded.append(pkg)
             continue
-        if include.is_populated() and rpm not in include:
-            excluded.append(rpm)
+        if include.is_populated() and pkg not in include:
+            excluded.append(pkg)
             continue
-        included.append(rpm)
+        included.append(pkg)
 
-        package = os.path.abspath(package)
-        subprocess.call(
-            f"cd {args.dest_dir}; rpm2cpio {package} | "
-            "cpio --extract --unconditional "
-            "--preserve-modification-time --make-directories "
-            "--extract-over-symlinks",
-            stdout=subprocess.DEVNULL,
-            shell=True,
-        )
-
-    add_meta_inf(args.dest_dir, args.version, args.ardana_version)
+        package = package.absolute()
+        if package.suffix == ".rpm":
+            _extract_rpm(package, args.dest_dir)
+        elif package.suffix == ".deb":
+            _extract_deb(package, args.dest_dir)
 
     _fix_virtualenv(args.dest_dir, args.relocate, args.no_relocate_shebang_list)
 
     # Write the log file, useful to better taylor the inclusion /
     # exclusion of packages.
-    with open(os.path.join(args.dest_dir, "packages.log"), "w") as f:
+    with (args.dest_dir / "packages.log").open("w") as f:
         print("# Included packages", file=f)
-        for rpm in sorted(included):
-            print(rpm, file=f)
+        for pkg in sorted(included):
+            print(pkg, file=f)
         print("\n\n# Excluded packages", file=f)
-        for rpm in sorted(excluded):
-            print(rpm, file=f)
+        for pkg in sorted(excluded):
+            print(pkg, file=f)
 
     # Write the L3/Maintenance track file, required to track the
     # content of the venv inside OBS.
-    query = "|".join(
-        ("%{NAME}", "%{EPOCH}", "%{VERSION}", "%{RELEASE}", "%{ARCH}", "%{DISTURL}")
-    )
-    with open(args.track, "w") as f:
-        for rpm in sorted(included):
-            rpm = os.path.join(args.repo, rpm)
-            output = subprocess.check_output(
-                f"rpm -qp --queryformat='{query}' {rpm}",
-                stderr=subprocess.DEVNULL,
-                shell=True,
-            )
-            print(output.decode("utf-8"), file=f)
+    if args.track:
+        with args.track.open("w") as f:
+            for pkg in sorted(included):
+                pkg = args.repo / pkg
+                if pkg.suffix == ".rpm":
+                    line = _get_rpm_track_info(pkg)
+                elif pkg.suffix == ".deb":
+                    line = _get_deb_track_info(pkg)
+                else:
+                    line = ["None"] * 7
+                print(line.decode("utf-8"), file=f)
 
 
 def _filter_binary_xml(root):
@@ -442,12 +419,12 @@ def _filter_binary_xml(root):
 
 
 def _filter_binary_name(names, args):
-    """Filter a list of RPM names"""
+    """Filter a list of package names"""
     exclude = FileList(args.exclude)
     if args.all:
         return names
     else:
-        return [rpm for rpm in names if rpm not in exclude]
+        return [pkg for pkg in names if pkg not in exclude]
 
 
 def _repository(args):
@@ -458,12 +435,16 @@ def _repository(args):
     )
     elements = _filter_binary_xml(ET.fromstring(output))
     # Unversioned name, so we remove the file extension
-    elements = [rpm.replace(".rpm", "") for rpm in elements]
+    elements = [re.sub(r"\.rpm$|\.deb$", "", pkg) for pkg in elements]
     return _filter_binary_name(elements, args)
 
 
 def include(args):
     """Generate initial include-rpm file"""
+    if not all((args.project, args.repo, args.arch)):
+        print("ERROR: please, specify the project, repository and architecture")
+        exit(1)
+
     print("# List of packages to include (use Python regex)")
     print()
     print("# Packages from the repository")
@@ -478,11 +459,18 @@ def exclude(args):
 
 def binary(args):
     """List binary packages from a source package"""
+    if not all((args.project, args.repo, args.arch, args.package)):
+        print(
+            "ERROR: please, specify the project, repository, architecture and package"
+        )
+        exit(1)
 
-    # OBS generate a full RPM package name, including the version and
-    # architecture.  To generate include-rpm and exclude-rpm, we will
+    # OBS generate a full package name, including the version and
+    # architecture.  To generate include-pkg and exclude-pkg, we will
     # need only the name of the package
-    rpm_re = re.compile(r"(.*)-([^-]+)-([^-]+)\.([^-\.]+)\.rpm")
+    pkg_re = re.compile(
+        r"(?:(.*)-([^-]+)-([^-]+)\.([^-\.]+)\.rpm)|(?:(.*)_([^_]+)_([^_]+)\.deb)"
+    )
 
     api = f"/build/{args.project}/{args.repo}/{args.arch}/{args.package}"
     output = subprocess.check_output(
@@ -490,10 +478,14 @@ def binary(args):
     )
     elements = _filter_binary_xml(ET.fromstring(output))
     # Take only the name of the package
-    elements = [rpm_re.match(rpm).groups()[0] for rpm in elements]
+    elements = [
+        pkg_re.match(pkg).groups()[0] or pkg_re.match(pkg).groups()[4]
+        for pkg in elements
+        if pkg_re.match(pkg)
+    ]
     elements = _filter_binary_name(elements, args)
-    for rpm in elements:
-        print(rpm)
+    for pkg in elements:
+        print(pkg)
 
 
 def _filter_requires_spec(spec):
@@ -504,7 +496,11 @@ def _filter_requires_spec(spec):
 
 def requires(args):
     """List requirements for a source package"""
+    if not all((args.project, args.package)):
+        print("ERROR: please, specify the project and package")
+        exit(1)
 
+    # TODO: we need to find a way for Debian
     api = f"/source/{args.project}/{args.package}/{args.package}.spec"
     output = subprocess.check_output(
         f"osc --apiurl {args.apiurl} api {api}", shell=True
@@ -516,29 +512,32 @@ def requires(args):
     include = FileList(args.include)
     exclude = FileList(args.exclude)
     in_venv = []
-    for rpm in requires:
-        if rpm in exclude:
+    for pkg in requires:
+        if pkg in exclude:
             continue
-        if include.is_populated() and rpm not in include:
+        if include.is_populated() and pkg not in include:
             continue
-        in_venv.append(rpm)
+        in_venv.append(pkg)
     requires = set(requires) - set(in_venv)
 
-    for rpm in sorted(requires):
-        requires = f"{rpm} {requires_and_version[rpm].strip()}"
+    for pkg in sorted(requires):
+        requires = f"{pkg} {requires_and_version[pkg].strip()}"
         print(requires.strip())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Utility to help venvs creation for OpenStack services"
+        description="Utility to help venvs creation for Python services"
     )
     subparsers = parser.add_subparsers(help="Sub-commands for venvjail")
 
     # Parser for `create` command
     subparser = subparsers.add_parser("create", help="Create a virtualenv")
     subparser.add_argument(
-        "dest_dir", metavar="DEST_DIR", help="Virtual environment directory"
+        "dest_dir",
+        type=pathlib.Path,
+        metavar="DEST_DIR",
+        help="Virtual environment directory",
     )
     subparser.add_argument(
         "-s",
@@ -549,7 +548,8 @@ if __name__ == "__main__":
     subparser.add_argument(
         "-l",
         "--relocate",
-        default="/opt/stack/venv",
+        type=pathlib.Path,
+        default="/opt/venv",
         help="Relocated virtual environment directory",
     )
     subparser.add_argument(
@@ -562,24 +562,33 @@ if __name__ == "__main__":
         "Specify with DEST_DIR.",
     )
     subparser.add_argument(
-        "-r", "--repo", default="/.build.binaries", help="Repository directory"
+        "-r",
+        "--repo",
+        type=pathlib.Path,
+        default=pathlib.Path("/.build.binaries"),
+        help="Repository directory",
     )
     subparser.add_argument(
         "-i",
         "--include",
+        type=pathlib.Path,
         default="include-rpm",
         help="File with the list of packages to install",
     )
     subparser.add_argument(
-        "-x", "--exclude", default="exclude-rpm", help="File with packages to exclude"
+        "-x",
+        "--exclude",
+        type=pathlib.Path,
+        default="exclude-rpm",
+        help="File with packages to exclude",
     )
     subparser.add_argument(
-        "-t", "--track", help="Filename for the L3/Maintenance track file"
+        "-t",
+        "--track",
+        type=pathlib.Path,
+        help="Filename for the L3/Maintenance track file",
     )
     subparser.add_argument("-v", "--version", default="0.1.0", help="Package version")
-    subparser.add_argument(
-        "-a", "--ardana-version", default="0.9.0", help="Ardana version"
-    )
     subparser.set_defaults(func=create)
 
     # Parser for `include` command
@@ -589,10 +598,8 @@ if __name__ == "__main__":
     subparser.add_argument(
         "-A", "--apiurl", default="https://api.opensuse.org", help="API address"
     )
-    subparser.add_argument(
-        "-p", "--project", default="Cloud:OpenStack:Master", help="Project name"
-    )
-    subparser.add_argument("-r", "--repo", default="SLE_12_SP3", help="Repository name")
+    subparser.add_argument("-p", "--project", help="Project name")
+    subparser.add_argument("-r", "--repo", default="standard", help="Repository name")
     subparser.add_argument("-a", "--arch", default="x86_64", help="Architecture")
     subparser.add_argument("--all", action="store_true", help="Include all packages")
     subparser.add_argument(
@@ -612,10 +619,8 @@ if __name__ == "__main__":
     subparser.add_argument(
         "-A", "--apiurl", default="https://api.opensuse.org", help="API address"
     )
-    subparser.add_argument(
-        "-p", "--project", default="Cloud:OpenStack:Master", help="Project name"
-    )
-    subparser.add_argument("-r", "--repo", default="SLE_12_SP3", help="Repository name")
+    subparser.add_argument("-p", "--project", help="Project name")
+    subparser.add_argument("-r", "--repo", default="standard", help="Repository name")
     subparser.add_argument("-a", "--arch", default="x86_64", help="Architecture")
     subparser.add_argument("--all", action="store_true", help="Include all packages")
     subparser.add_argument(
@@ -631,9 +636,7 @@ if __name__ == "__main__":
     subparser.add_argument(
         "-A", "--apiurl", default="https://api.opensuse.org", help="API address"
     )
-    subparser.add_argument(
-        "-p", "--project", default="Cloud:OpenStack:Master", help="Project name"
-    )
+    subparser.add_argument("-p", "--project", help="Project name")
     subparser.add_argument(
         "-i",
         "--include",
@@ -646,4 +649,8 @@ if __name__ == "__main__":
     subparser.set_defaults(func=requires)
 
     args = parser.parse_args()
+    if not hasattr(args, "func"):
+        print("ERROR: No action specified")
+        parser.print_help()
+        exit(1)
     args.func(args)
