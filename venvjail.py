@@ -122,6 +122,7 @@ def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang):
     _fix_broken_links(dest_dir, directories=["srv"])
     _fix_relocation(dest_dir, virtual_env, no_relocate_shebang)
     _fix_activators(dest_dir, virtual_env)
+    _fix_loader(dest_dir, virtual_env)
     _fix_systemd_services(dest_dir, virtual_env)
 
 
@@ -267,6 +268,27 @@ def _fix_activators(dest_dir, virtual_env):
         # for different architectures
         after, line = action["insert"]
         _insert(filename, after, line)
+
+
+def _fix_loader(dest_dir, virtual_env):
+    """Fix virtualenv python entry point."""
+    loader = f"""#!/bin/sh
+
+export VIRTUAL_ENV="{virtual_env}"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/bin"
+exec {{}} "$@"
+"""
+
+    # We replace all the python interpreters with a loader that set
+    # the correct env variables before executing it
+    for python in (dest_dir / "bin").glob("python*"):
+        new_name = python.with_suffix(".original")
+        python.rename(new_name)
+        with python.open("w") as f:
+            new_python = virtual_env / "bin" / new_name.name
+            f.write(loader.format(new_python))
+        python.chmod(0o755)
 
 
 def _fix_systemd_services_in(services_dir, virtual_env):
