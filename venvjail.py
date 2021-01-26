@@ -21,7 +21,6 @@
 import argparse
 import datetime
 import fnmatch
-import glob
 import itertools
 import os
 import os.path
@@ -315,8 +314,7 @@ def _extract_rpm(package, directory):
     subprocess.call(
         f"cd {directory}; rpm2cpio {package} | "
         "cpio --extract --unconditional "
-        "--preserve-modification-time --make-directories "
-        "--extract-over-symlinks",
+        "--preserve-modification-time --make-directories",
         stdout=subprocess.DEVNULL,
         shell=True,
     )
