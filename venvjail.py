@@ -313,10 +313,18 @@ def _fix_systemd_services(dest_dir, virtual_env):
 
 
 def _extract_rpm(package, directory):
+    cpio_help = subprocess.check_output(["cpio", "--help"])
+    cmd = [
+        "cpio",
+        "--extract",
+        "--unconditional",
+        "--preserve-modification-time",
+        "--make-directories",
+    ]
+    if b"--extract-over-symlinks" in cpio_help:
+        cmd.append("--extract-over-symlinks")
     subprocess.call(
-        f"cd {directory}; rpm2cpio {package} | "
-        "cpio --extract --unconditional "
-        "--preserve-modification-time --make-directories",
+        f"cd {directory}; rpm2cpio {package} | {' '.join(cmd)}",
         stdout=subprocess.DEVNULL,
         shell=True,
     )
