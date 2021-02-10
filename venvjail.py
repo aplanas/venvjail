@@ -312,8 +312,10 @@ exec {{}} "$@"
     # We replace all the python interpreters with a loader that set
     # the correct env variables before executing it
     for python in (dest_dir / "bin").glob("python*"):
-        new_name = python.with_suffix(".original")
-        python.rename(new_name)
+        if python.is_symlink():
+            continue
+        new_name = python.with_name(python.name + ".original")
+        python.replace(new_name)
         with python.open("w") as f:
             new_python = virtual_env / "bin" / new_name.name
             f.write(loader.format(new_python))
