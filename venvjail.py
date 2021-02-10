@@ -27,6 +27,7 @@ import os.path
 import pathlib
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 
 # Sane default for exclude-rpm file
@@ -111,13 +112,13 @@ def _insert(filename, after, line):
     open(filename, "w").writelines(lines)
 
 
-def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang):
+def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang, python_version):
     """Fix virtualenv activators."""
     # New path where the venv will live at the end
     virtual_env = relocated / dest_dir
 
     _fix_filesystem(dest_dir)
-    _fix_alternatives(dest_dir, relocated)
+    _fix_alternatives(dest_dir, relocated, python_version)
     _fix_broken_links(dest_dir, directories=["srv"])
     _fix_relocation(dest_dir, virtual_env, no_relocate_shebang)
     _fix_activators(dest_dir, virtual_env)
@@ -165,19 +166,20 @@ def _fix_filesystem(dest_dir):
             dir_.chmod(mod_)
 
 
-def _fix_alternatives(dest_dir, relocated):
+def _fix_alternatives(dest_dir, relocated, python_version):
     """Fix alternative links."""
-    # os.scandir() was implemented in 3.5, but for now we are in 3.4
+    if not python_version:
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    # TODO: os.scandir() was implemented in 3.5
     for dirpath, dirnames, filenames in os.walk(dest_dir):
         for name in filenames:
             rel_name = os.path.join(dirpath, name)
             if os.path.islink(rel_name) and "alternatives" in os.readlink(rel_name):
-                # TODO: discover the Python 3 version
-                # We assume that the Python 3.6 alternative is living
-                # in the same directory, but we create the link in
-                # the place were it will live at the end
-                alt_name = os.path.join(relocated, dirpath, name + "-3.6")
-                alt_rel_name = rel_name + "-3.6"
+                # We assume that the Python alternative is living in
+                # the same directory, but we create the link in the
+                # place were it will live at the end
+                alt_name = os.path.join(relocated, dirpath, name + f"-{python_version}")
+                alt_rel_name = rel_name + f"-{python_version}"
                 if os.path.exists(alt_rel_name):
                     os.unlink(rel_name)
                     os.symlink(alt_name, rel_name)
@@ -397,7 +399,9 @@ def create(args):
         elif package.suffix == ".deb":
             _extract_deb(package, args.dest_dir)
 
-    _fix_virtualenv(args.dest_dir, args.relocate, args.no_relocate_shebang_list)
+    _fix_virtualenv(
+        args.dest_dir, args.relocate, args.no_relocate_shebang_list, args.python_version
+    )
 
     # Write the log file, useful to better taylor the inclusion /
     # exclusion of packages.
@@ -565,6 +569,11 @@ if __name__ == "__main__":
         "--system-site-packages",
         action="store_false",
         help="Allows access to the global site-packages",
+    )
+    subparser.add_argument(
+        "-p",
+        "--python-version",
+        help="Python version used during relocation",
     )
     subparser.add_argument(
         "-l",
