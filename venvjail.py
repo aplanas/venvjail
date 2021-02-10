@@ -114,12 +114,19 @@ def _insert(filename, after, line):
 
 def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang, python_version):
     """Fix virtualenv activators."""
+    if not python_version:
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
     # New path where the venv will live at the end
     virtual_env = relocated / dest_dir
 
     _fix_filesystem(dest_dir)
     _fix_alternatives(dest_dir, relocated, python_version)
-    _fix_broken_links(dest_dir, directories=["srv"])
+    _fix_broken_links(
+        dest_dir,
+        relocated,
+        directories=["srv", f"lib/python{python_version}/site-packages/pytz"],
+    )
     _fix_relocation(dest_dir, virtual_env, no_relocate_shebang)
     _fix_activators(dest_dir, virtual_env)
     _fix_loader(dest_dir, virtual_env)
@@ -168,8 +175,6 @@ def _fix_filesystem(dest_dir):
 
 def _fix_alternatives(dest_dir, relocated, python_version):
     """Fix alternative links."""
-    if not python_version:
-        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
     # TODO: os.scandir() was implemented in 3.5
     for dirpath, dirnames, filenames in os.walk(dest_dir):
         for name in filenames:
@@ -187,15 +192,17 @@ def _fix_alternatives(dest_dir, relocated, python_version):
                     print(f"ERROR: alternative link for {name} not found")
 
 
-def _fix_broken_links(dest_dir, directories=None):
+def _fix_broken_links(dest_dir, relocated, directories=None):
     """Fix broken links."""
-    # Some packages create absolute soft-links.  We can use some
-    # heuristics to detect them, and if is possible, fix them.
+    # Some packages create absolute or broken relative soft-links.  We
+    # can use some heuristics to detect them, and if is possible, fix
+    # them.
     for fix_dir in directories:
-        fix_dir = os.path.join(dest_dir, fix_dir)
-        for dirpath, dirnames, filenames in os.walk(fix_dir):
+        fix_dest_dir = dest_dir / fix_dir
+        for dirpath, dirnames, filenames in os.walk(fix_dest_dir):
             for name in itertools.chain(dirnames, filenames):
                 rel_name = os.path.join(dirpath, name)
+                abs_name = os.path.join(relocated, dirpath, name)
                 if os.path.islink(rel_name) and os.readlink(rel_name).startswith("/"):
                     link_to = os.path.join(dest_dir, os.readlink(rel_name)[1:])
                     if os.path.exists(link_to):
@@ -206,7 +213,27 @@ def _fix_broken_links(dest_dir, directories=None):
                         os.unlink(rel_name)
                         os.symlink(rel_link, rel_name)
                     else:
-                        print(f"ERROR: alternative link for {name} not found")
+                        print(f"ERROR: relative link for {name} not found")
+                elif os.path.islink(rel_name) and os.readlink(rel_name).startswith(
+                    ".."
+                ):
+                    fixed = False
+                    for prefix in ["/", "/usr"]:
+                        link_to = os.path.abspath(
+                            os.path.join(prefix, fix_dir, os.readlink(rel_name))
+                        )
+                        if os.path.exists(link_to):
+                            # Convert the relative link into another
+                            # relative link that points to the correct
+                            # place
+                            rel_link = os.path.relpath(
+                                link_to, os.path.dirname(abs_name)
+                            )
+                            os.unlink(rel_name)
+                            os.symlink(rel_link, rel_name)
+                            fixed = True
+                    if not fixed:
+                        print(f"ERROR: relative link for {name} not found")
 
 
 def _fix_relocation(dest_dir, virtual_env, no_relocate_shebang):
