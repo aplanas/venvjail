@@ -203,6 +203,14 @@ def _fix_broken_links(dest_dir, relocated, directories=None):
             for name in itertools.chain(dirnames, filenames):
                 rel_name = os.path.join(dirpath, name)
                 abs_name = os.path.join(relocated, dirpath, name)
+
+                # If the link exist, lets assume that is OK in the
+                # bundle too
+                if os.path.islink(rel_name) and os.path.exists(os.readlink(rel_name)):
+                    continue
+
+                # If the link is absolute, lets try to point to some
+                # place inside the bundle
                 if os.path.islink(rel_name) and os.readlink(rel_name).startswith("/"):
                     link_to = os.path.join(dest_dir, os.readlink(rel_name)[1:])
                     if os.path.exists(link_to):
@@ -214,6 +222,8 @@ def _fix_broken_links(dest_dir, relocated, directories=None):
                         os.symlink(rel_link, rel_name)
                     else:
                         print(f"ERROR: relative link for {name} not found")
+                # If the link is relative, probably is pointing to
+                # some place outside
                 elif os.path.islink(rel_name) and os.readlink(rel_name).startswith(
                     ".."
                 ):
