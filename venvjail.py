@@ -26,6 +26,7 @@ import os
 import os.path
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -110,6 +111,16 @@ def _insert(filename, after, line):
     index = lines.index(after + "\n")
     lines.insert(index + 1, line + "\n")
     open(filename, "w").writelines(lines)
+
+
+def _find_files(dest_dir, filelist, prefix=None):
+    """Return the list of files that match in filelist."""
+    prefix = prefix if prefix else dest_dir
+    for entry in os.scandir(dest_dir):
+        if os.path.relpath(entry.path, prefix) in filelist:
+            yield entry
+        if entry.is_dir(follow_symlinks=False):
+            yield from _find_files(entry.path, filelist, prefix)
 
 
 def _fix_virtualenv(dest_dir, relocated, no_relocate_shebang, python_version):
@@ -446,6 +457,17 @@ def create(args):
         elif package.suffix == ".deb":
             _extract_deb(package, args.dest_dir)
 
+    # Prune some files and maintain a log
+    remove = FileList(args.remove)
+    to_remove = [entry for entry in _find_files(args.dest_dir, remove)]
+    for entry in to_remove:
+        if not os.path.exists(entry.path):
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry.path)
+        else:
+            os.remove(entry.path)
+
     _fix_virtualenv(
         args.dest_dir, args.relocate, args.no_relocate_shebang_list, args.python_version
     )
@@ -459,6 +481,9 @@ def create(args):
         print("\n\n# Excluded packages", file=f)
         for pkg in sorted(excluded):
             print(pkg, file=f)
+        print("\n\n# Removed files", file=f)
+        for fn in sorted([entry.path for entry in to_remove]):
+            print(fn, file=f)
 
     # Write the L3/Maintenance track file, required to track the
     # content of the venv inside OBS.
@@ -658,6 +683,13 @@ if __name__ == "__main__":
         type=pathlib.Path,
         default="exclude-rpm",
         help="File with packages to exclude",
+    )
+    subparser.add_argument(
+        "-e",
+        "--remove",
+        type=pathlib.Path,
+        default="remove-file",
+        help="File with filenames to remove",
     )
     subparser.add_argument(
         "-t",
