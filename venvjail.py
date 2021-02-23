@@ -351,14 +351,18 @@ def _fix_systemd_services_in(services_dir, virtual_env):
         _replace(service, r"ExecStartPre=-(.*)", rf"ExecStartPre=-{virtual_env}\1")
         service.chmod(0o444)
 
-        # TODO: Do we need this? If so, we should adjust some After and Before
+        # TODO: Do we need this? If so, we should adjust some After
+        # and Before.
         # For convenience, rename the service
         service.rename(services_dir / ("venv-" + service.name))
 
 
 def _fix_systemd_services(dest_dir, virtual_env):
     """Fix systemd services."""
-    for systemd_dir in ("lib/systemd/system", "usr/lib/systemd/system"):
+    # "lib/systemd/system" and "usr/lib/systemd/system" are links in
+    # Python3 venvs.  For now we choose only one to avoid processing
+    # two times the same service file
+    for systemd_dir in ("lib/systemd/system",):
         _fix_systemd_services_in(dest_dir / systemd_dir, virtual_env)
 
 
