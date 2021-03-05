@@ -716,7 +716,11 @@ if __name__ == "__main__":
     subparser.add_argument("-a", "--arch", default="x86_64", help="Architecture")
     subparser.add_argument("--all", action="store_true", help="Include all packages")
     subparser.add_argument(
-        "-x", "--exclude", default="exclude-rpm", help="File with packages to exclude"
+        "-x",
+        "--exclude",
+        type=pathlib.Path,
+        default="exclude-rpm",
+        help="File with packages to exclude",
     )
     subparser.set_defaults(func=include)
 
@@ -737,7 +741,11 @@ if __name__ == "__main__":
     subparser.add_argument("-a", "--arch", default="x86_64", help="Architecture")
     subparser.add_argument("--all", action="store_true", help="Include all packages")
     subparser.add_argument(
-        "-x", "--exclude", default="exclude-rpm", help="File with packages to exclude"
+        "-x",
+        "--exclude",
+        type=pathlib.Path,
+        default="exclude-rpm",
+        help="File with packages to exclude",
     )
     subparser.set_defaults(func=binary)
 
@@ -753,11 +761,16 @@ if __name__ == "__main__":
     subparser.add_argument(
         "-i",
         "--include",
+        type=pathlib.Path,
         default="include-rpm",
         help="File with the list of packages to install",
     )
     subparser.add_argument(
-        "-x", "--exclude", default="exclude-rpm", help="File with packages to exclude"
+        "-x",
+        "--exclude",
+        type=pathlib.Path,
+        default="exclude-rpm",
+        help="File with packages to exclude",
     )
     subparser.set_defaults(func=requires)
 
