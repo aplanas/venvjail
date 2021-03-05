@@ -388,7 +388,7 @@ def _extract_deb(package, directory):
     subprocess.call(
         f"cd {directory}; ar x {package}; "
         "tar -xJvf data.tar.xz; "
-        "rm control.tar.gz data.tar.xz debian-binary",
+        "rm control.tar.xz data.tar.xz debian-binary",
         stdout=subprocess.DEVNULL,
         shell=True,
     )
