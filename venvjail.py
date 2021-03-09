@@ -387,7 +387,7 @@ def _extract_rpm(package, directory):
 def _extract_deb(package, directory):
     subprocess.call(
         f"cd {directory}; ar x {package}; "
-        "tar -xJvf data.tar.xz; "
+        "tar --keep-directory-symlink -xJvf data.tar.xz; "
         "rm control.tar.xz data.tar.xz debian-binary",
         stdout=subprocess.DEVNULL,
         shell=True,
