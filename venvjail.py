@@ -326,7 +326,9 @@ def _fix_loader(dest_dir, virtual_env):
 
 export VIRTUAL_ENV="{virtual_env}"
 export PATH="$VIRTUAL_ENV/bin:$PATH"
-export LD_LIBRARY_PATH="$VIRTUAL_ENV/bin"
+export LD_LIBRARY_PATH="$VIRTUAL_ENV/lib"
+export PYTHONHOME="$VIRTUAL_ENV"
+
 exec {{}} "$@"
 """
 
