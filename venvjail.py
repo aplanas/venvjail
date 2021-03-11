@@ -465,7 +465,7 @@ def create(args):
 
     # Prune some files and maintain a log
     remove = FileList(args.remove)
-    to_remove = [entry for entry in _find_files(args.dest_dir, remove)]
+    to_remove = list(_find_files(args.dest_dir, remove))
     for entry in to_remove:
         if not os.path.exists(entry.path):
             continue
