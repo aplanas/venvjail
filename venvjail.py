@@ -468,7 +468,7 @@ def create(args):
     remove = FileList(args.remove)
     to_remove = list(_find_files(args.dest_dir, remove))
     for entry in to_remove:
-        if not os.path.exists(entry.path):
+        if not (os.path.exists(entry.path) or os.path.islink(entry.path)):
             continue
         if entry.is_dir():
             shutil.rmtree(entry.path)
