@@ -83,6 +83,7 @@ class FileList:
                 if line.strip() and not line.strip().startswith("#")
             ]
         except IOError:
+            print("File {} not found, using empty default")
             self.items = []
 
     def is_populated(self):
@@ -684,14 +685,14 @@ if __name__ == "__main__":
         help="File with the list of packages to install",
     )
     subparser.add_argument(
-        "-x",
+        "-e",
         "--exclude",
         type=pathlib.Path,
         default="exclude-rpm",
         help="File with packages to exclude",
     )
     subparser.add_argument(
-        "-e",
+        "-d",
         "--remove",
         type=pathlib.Path,
         default="remove-file",
